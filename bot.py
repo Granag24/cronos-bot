@@ -1,11 +1,13 @@
 import os
 import requests
 import pandas as pd
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # CONFIGURACIÓN INICIAL
-TOKEN = "8679146706:AAHruVmgXuvjubnUEpzMEAr8m7zYR3Agkz8" # Reemplaza esto con tu token real
+TOKEN = "8679146706:AAHruVmgXuvjubnUEpzMEAr8m7zYR3Agkz8" # Pega tu token de 86791... aquí
 
 TEAMS = {
     "arsenal": {"id": "18bb2c1a", "name": "Arsenal"},
@@ -81,11 +83,27 @@ async def analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = format_msg(t["name"], atk_score, def_score)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+# --- TRUCO PARA RENDER (Servidor Web Fantasma) ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Cronos Bot is Alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    server.serve_forever()
+# -------------------------------------------------
+
 def main():
+    # Iniciamos el servidor fantasma en segundo plano
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     token_final = os.getenv("TELEGRAM_TOKEN", TOKEN)
     app = Application.builder().token(token_final).build()
     app.add_handler(CommandHandler("analizar", analizar))
-    print("🚀 Cronos Bot está online...")
+    print("🚀 Cronos Bot está online y el servidor web fantasma está activo...")
     app.run_polling()
 
 if __name__ == "__main__":
