@@ -2,26 +2,44 @@ import os
 import requests
 import pandas as pd
 import threading
+import time
+import random
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# CONFIGURACIÓN INICIAL
-TOKEN = "8679146706:AAHruVmgXuvjubnUEpzMEAr8m7zYR3Agkz8" # Pega tu token de 86791... aquí
+# --- CONFIGURACIÓN ---
+# Si no usas variables de entorno en Render, pon tu token aquí:
+TOKEN = "8679146706:AAHruVmgXuvjubnUEpzMEAr8m7zYR3Agkz8"
 
 TEAMS = {
     "arsenal": {"id": "18bb2c1a", "name": "Arsenal"},
     "barcelona": {"id": "206d90db", "name": "Barcelona"},
     "real madrid": {"id": "53a2f082", "name": "Real-Madrid"},
-    "manchester city": {"id": "b8fd0353", "name": "Manchester-City"}
+    "manchester city": {"id": "b8fd0353", "name": "Manchester-City"},
+    "liverpool": {"id": "822bd0ba", "name": "Liverpool"},
+    "bayern munich": {"id": "05439c85", "name": "Bayern-Munich"}
 }
 
 def get_fbref_data(team_id, team_name):
     url = f"https://fbref.com/en/squads/{team_id}/{team_name}-Stats"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    # DISFRAZ ANTI-BLOQUEO MEJORADO
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://google.com"
+    }
     
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        # Pausa aleatoria para no parecer un robot agresivo
+        time.sleep(random.uniform(1.5, 3.0))
+        
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code == 429:
+            print("FBref nos bloqueó temporalmente (Error 429)")
+            return "bloqueo", None
+            
         tables = pd.read_html(r.text)
         
         attack = {"gls": 0, "xG": 0, "shots": 0}
@@ -32,13 +50,13 @@ def get_fbref_data(team_id, team_name):
                 t.columns = t.columns.get_level_values(-1)
 
             if "Gls" in t.columns and "xG" in t.columns and "Sh" in t.columns:
-                attack["gls"] = pd.to_numeric(t["Gls"], errors='coerce').mean()
-                attack["xG"] = pd.to_numeric(t["xG"], errors='coerce').mean()
-                attack["shots"] = pd.to_numeric(t["Sh"], errors='coerce').mean()
+                attack["gls"] = pd.to_numeric(t["Gls"], errors='coerce').fillna(0).mean()
+                attack["xG"] = pd.to_numeric(t["xG"], errors='coerce').fillna(0).mean()
+                attack["shots"] = pd.to_numeric(t["Sh"], errors='coerce').fillna(0).mean()
 
             if "Save%" in t.columns and "GA90" in t.columns:
-                defense["save"] = pd.to_numeric(t["Save%"], errors='coerce').mean()
-                defense["ga90"] = pd.to_numeric(t["GA90"], errors='coerce').mean()
+                defense["save"] = pd.to_numeric(t["Save%"], errors='coerce').fillna(70).mean()
+                defense["ga90"] = pd.to_numeric(t["GA90"], errors='coerce').fillna(1).mean()
 
         atk_score = (attack["xG"] * 0.5) + (attack["gls"] * 0.3) + (attack["shots"] * 0.2)
         def_score = ((1 - (defense["save"]/100)) * 0.5) + (defense["ga90"] * 0.5)
@@ -50,7 +68,7 @@ def get_fbref_data(team_id, team_name):
 
 def format_msg(team, atk, dfn):
     status_atk = "Ataque FUERTE 🔥" if atk > 2 else "Ataque MEDIO ⚖️"
-    status_def = "Defensa SÓLIDA 🧱" if dfn < 1 else "Defensa FRÁGIL ⚠️"
+    status_def = "Defensa SÓLIDA 🧱" if dfn < 1.2 else "Defensa FRÁGIL ⚠️"
     
     return (
         f"⚽ **{team.upper()}**\n\n"
@@ -76,14 +94,17 @@ async def analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = TEAMS[query]
     atk_score, def_score = get_fbref_data(t["id"], t["name"])
 
-    if atk_score is None:
-        await update.message.reply_text("🤯 FBref no respondió. Intenta en unos minutos.")
+    if atk_score == "bloqueo":
+        await update.message.reply_text("⚠️ FBref detectó mucha actividad. Espera 2 minutos e intenta de nuevo.")
+        return
+    elif atk_score is None:
+        await update.message.reply_text("🤯 FBref no respondió. Reintentando en breve...")
         return
 
     msg = format_msg(t["name"], atk_score, def_score)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- TRUCO PARA RENDER (Servidor Web Fantasma) ---
+# --- SERVIDOR FANTASMA PARA RENDER ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -94,16 +115,15 @@ def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), DummyHandler)
     server.serve_forever()
-# -------------------------------------------------
 
 def main():
-    # Iniciamos el servidor fantasma en segundo plano
+    # Servidor web en hilo separado
     threading.Thread(target=run_dummy_server, daemon=True).start()
     
-    token_final = os.getenv("TELEGRAM_TOKEN", TOKEN)
-    app = Application.builder().token(token_final).build()
+    # Iniciar Bot
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("analizar", analizar))
-    print("🚀 Cronos Bot está online y el servidor web fantasma está activo...")
+    print("🚀 Cronos Bot Online en Render...")
     app.run_polling()
 
 if __name__ == "__main__":
